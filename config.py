@@ -19,10 +19,49 @@ _C.BASE = ['']
 # Data settings
 # -----------------------------------------------------------------------------
 _C.DATA = CN()
+# sum of epoch
+_C.DATA.EPOCHS = 80
+    # epochs = 80
+#     learning rate
+_C.DATA.LEARNING_RATE = 32
+    # lr = 1e-4
+# gamma
+_C.DATA.GAMMA = 0.9
+    # gamma = 0.9
+# seed
+_C.DATA.SEED = 0
+    # seed = 0
+# halfwidth
+#*****
+#*****
+#**0**
+#*****
+#*****
+_C.DATA.HALFWIDTH = 2
+    # HalfWidth = 2
+# 这个的用处 只有一个每种类找多少个样本 没用 先不写
+_C.DATA.SAMPLE_NUM = 32
+    # SAMPLE_NUM = 180
+    # 种类数
+_C.DATA.N_CLASS = 32
+    # nClass = 16
+    # 波段数
+_C.DATA.CHANNEL_DIM = 32
+# 这个命名是不对的，表示的每个channel表示为长度为多少的特征向量
+_C.DATA.PATCH_DIM = 512
+    # dim = 112
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.DATA.BATCH_SIZE = 128
+_C.DATA.BATCH_SIZE = 32
 # Path to dataset, could be overwritten by command line argument
 _C.DATA.DATA_PATH = ''
+_C.DATA.DATA_SOURCE_PATH = ''
+_C.DATA.DATA_TARGET_PATH = ''
+_C.DATA.LABEL_TARGET_PATH = ''
+_C.DATA.LABEL_SOURCE_PATH = ''
+# is hsi
+_C.IS_HSI = True
+# id distrubition
+_C.IS_DIST = False
 # Dataset name
 _C.DATA.DATASET = 'imagenet'
 # Input image size
@@ -87,9 +126,27 @@ _C.MODEL.VIT.USE_RPB = False
 _C.MODEL.VIT.USE_SHARED_RPB = True
 _C.MODEL.VIT.USE_MEAN_POOLING = False
 
+# Dtransformer Transformer parameters
+_C.MODEL.Dtransformer = CN()
+_C.MODEL.Dtransformer.PATCH_SIZE = 4
+_C.MODEL.Dtransformer.IN_CHANS = 3
+_C.MODEL.Dtransformer.EMBED_DIM = 96
+_C.MODEL.Dtransformer.DEPTHS = [2, 2, 6, 2]
+_C.MODEL.Dtransformer.NUM_HEADS = [3, 6, 12, 24]
+_C.MODEL.Dtransformer.WINDOW_SIZE = 7
+_C.MODEL.Dtransformer.MLP_RATIO = 4.
+_C.MODEL.Dtransformer.QKV_BIAS = True
+_C.MODEL.Dtransformer.QK_SCALE = None
+_C.MODEL.Dtransformer.APE = False
+_C.MODEL.Dtransformer.PATCH_NORM = True
+
+
 # -----------------------------------------------------------------------------
 # Training settings
 # -----------------------------------------------------------------------------
+
+
+
 _C.TRAIN = CN()
 _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 300
@@ -101,7 +158,7 @@ _C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm
 _C.TRAIN.CLIP_GRAD = 5.0
 # Auto resume from latest checkpoint
-_C.TRAIN.AUTO_RESUME = True
+_C.TRAIN.AUTO_RESUME = False
 # Gradient accumulation steps
 # could be overwritten by command line argument
 _C.TRAIN.ACCUMULATION_STEPS = 0
@@ -244,6 +301,19 @@ def update_config(config, args):
         config.EVAL_MODE = True
     if _check_args('throughput'):
         config.THROUGHPUT_MODE = True
+    if _check_args('data_source_path'):
+        config.DATA.DATA_SOURCE_PATH = args.data_source_path
+    if _check_args('data_target_path'):
+        config.DATA.DATA_TARGET_PATH = args.data_target_path
+    if _check_args('label_source_path'):
+        config.DATA.LABEL_SOURCE_PATH = args.label_source_path
+    if _check_args('label_target_path'):
+        config.DATA.LABEL_TARGET_PATH = args.label_target_path
+    if _check_args('is_dist'):
+        config.IS_DIST = args.is_dist
+    if _check_args('is_hsi'):
+        config.IS_HSI = args.is_HSI
+
 
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank

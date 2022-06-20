@@ -46,12 +46,16 @@ def parse_option():
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
     parser.add_argument('--data-path', type=str, help='path to dataset')
+    parser.add_argument('--data-source-path', type=str, help='path to source dataset')
+    parser.add_argument('--label-source-path', type=str, help='path to source label')
+    parser.add_argument('--data-target-path', type=str, help='path to target dataset')
+    parser.add_argument('--label-target-path', type=str, help='path to target label')
     parser.add_argument('--pretrained', type=str, help='path to pre-trained model')
     parser.add_argument('--resume', help='resume from checkpoint')
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
     parser.add_argument('--use-checkpoint', action='store_true',
                         help="whether to use gradient checkpointing to save memory")
-    parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
+    parser.add_argument('--amp-opt-level', type=str, default='O0', choices=['O0', 'O1', 'O2'],
                         help='mixed precision opt level, if O0, no amp is used')
     parser.add_argument('--output', default='output', type=str, metavar='PATH',
                         help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
@@ -70,25 +74,31 @@ def parse_option():
 
 
 def main(config):
+    # 获取训练数据和测试数据
+    # 如果需要设置训练数据和测试数据，那么只能读取源域的吧
+    # 或者训练数据 可以用源域大部分加上目标域全部，测试数据使用源域的一小部分
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config, logger, is_pretrain=False)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
+    # 构建一个模型
+    # 构建模型部分好像也不太对
     model = build_model(config, is_pretrain=False)
     model.cuda()
     logger.info(str(model))
-
+    # 优化器的部分还没写
     optimizer = build_optimizer(config, model, logger, is_pretrain=False)
+    # 已经设置为00 不用混合精度加速
     if config.AMP_OPT_LEVEL != "O0":
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
-    model_without_ddp = model.module
+    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    model_without_ddp = model
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"number of params: {n_parameters}")
     if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
-
+    # 创建一个lr计划表
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.AUG.MIXUP > 0.:
@@ -119,9 +129,10 @@ def main(config):
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
             return
+    #     预训练恢复模型
     elif config.PRETRAINED:
         load_pretrained(config, model_without_ddp, logger)
-
+    #  未进入
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
         return
@@ -129,10 +140,11 @@ def main(config):
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
-        data_loader_train.sampler.set_epoch(epoch)
+        # 分布式里的设置epoch 需要进行修改吗？
+        # data_loader_train.sampler.set_epoch(epoch)
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
@@ -158,6 +170,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
     start = time.time()
     end = time.time()
+    # 就是一个
     for idx, (samples, targets) in enumerate(data_loader):
         samples = samples.cuda(non_blocking=True)
         targets = targets.cuda(non_blocking=True)
@@ -250,9 +263,9 @@ def validate(config, data_loader, model):
         loss = criterion(output, target)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
-        acc1 = reduce_tensor(acc1)
-        acc5 = reduce_tensor(acc5)
-        loss = reduce_tensor(loss)
+        # acc1 = reduce_tensor(acc1)
+        # acc5 = reduce_tensor(acc5)
+        # loss = reduce_tensor(loss)
 
         loss_meter.update(loss.item(), target.size(0))
         acc1_meter.update(acc1.item(), target.size(0))
@@ -309,18 +322,25 @@ if __name__ == '__main__':
         rank = -1
         world_size = -1
     torch.cuda.set_device(config.LOCAL_RANK)
-    torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
-    torch.distributed.barrier()
-
-    seed = config.SEED + dist.get_rank()
+    if config.IS_DIST:
+        torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
+        torch.distributed.barrier()
+    seed = config.SEED + dist.get_rank() if config.IS_DIST else config.SEED
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
 
-    # linear scale the learning rate according to total batch size, may not be optimal
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+    if config.IS_DIST:
+        # linear scale the learning rate according to total batch size, may not be optimal
+        linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+        linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+        linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+    else:
+        # linear scale the learning rate according to total batch size, may not be optimal
+        # 将world_size设置为了1 那么会不会导致学习率比较低？
+        linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE / 512.0
+        linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE / 512.0
+        linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE / 512.0
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
@@ -333,13 +353,14 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=0, name=f"{config.MODEL.NAME}")
 
-    if dist.get_rank() == 0:
-        path = os.path.join(config.OUTPUT, "config.json")
-        with open(path, "w") as f:
-            f.write(config.dump())
-        logger.info(f"Full config saved to {path}")
+    # 不考虑rank，直接输出config
+    # if dist.get_rank() == 0:
+    path = os.path.join(config.OUTPUT, "hsi_config.json")
+    with open(path, "w") as f:
+        f.write(config.dump())
+    logger.info(f"Full config saved to {path}")
 
     # print config
     logger.info(config.dump())

@@ -12,6 +12,7 @@ import argparse
 import datetime
 import numpy as np
 import torch
+import dill
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
@@ -22,7 +23,7 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
+from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper,cubeData1,get_sample_data_without_train_val,get_hsi_dataloader
 from PIL import Image
 import matplotlib.pyplot as plt
 # from apex import amp
@@ -48,7 +49,10 @@ def parse_option():
     parser.add_argument('--is_dist', default=False, type=bool, help="is distrubution")
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
-    parser.add_argument('--data-path', type=str, help='path to dataset')
+    parser.add_argument('--data-source-path', type=str, help='path to source dataset')
+    parser.add_argument('--label-source-path', type=str, help='path to source label')
+    parser.add_argument('--data-target-path', type=str, help='path to target dataset')
+    parser.add_argument('--label-target-path', type=str, help='path to target label')
     # 继续？继续什么呢
     parser.add_argument('--resume', help='resume from checkpoint')
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
@@ -80,10 +84,10 @@ def main(config):
     # data_loader_train = build_loader(config, logger, is_pretrain=True)
     # 测试得到已经加载了train文件夹
 
-
-
+    # 加载高光谱数据集
+    data_loader_train = get_hsi_dataloader(config)
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config, is_pretrain=True)
+    model = build_model(config, is_pretrain=True,is_hsi=True)
     model.cuda()
     logger.info(str(model))
     # 构建优化器
@@ -129,7 +133,9 @@ def main(config):
 
         train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler)
         # 保存断点的函数吧 先不看了
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        # if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        #     save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
+        if (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
 
     total_time = time.time() - start_time
@@ -154,7 +160,9 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 
     start = time.time()
     end = time.time()
+    # index_count = 0
     for idx, (img, mask, _) in enumerate(data_loader):
+        # index_count += 1
         #non-blocking 不会堵塞与其无关的的事情
         # img size 128 192 192
         # mask size 128 48 48
@@ -224,6 +232,7 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
+    # logger.info(f"INDEX_COUNT {epoch} index_count is {index_count}")
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 

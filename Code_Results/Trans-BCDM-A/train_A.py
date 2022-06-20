@@ -7,7 +7,7 @@ from torch.autograd import Variable
 from torch.utils.data import TensorDataset, DataLoader
 import time
 
-from models.net_A import *
+from models.Trans_BCDM_A.net_A import *
 from utils_A import *
 
 import numpy as np

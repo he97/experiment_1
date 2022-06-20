@@ -4,14 +4,12 @@ from __future__ import print_function
 import os
 import random
 from sklearn import metrics
-import numpy as np
-import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import TensorDataset, DataLoader
 
-from models.net_A import DTransformer, Encoder
+from models.Trans_BCDM_A.net_A import DTransformer, Encoder
 from Code_Results.CNN_Trans.A.utils_A import *
 
 import matplotlib.pyplot as plt
@@ -48,6 +46,7 @@ device = 'cuda'
 accuracy = np.zeros([1, 1])
 A = np.zeros([1, nClass])
 k = np.zeros([1, 1])
+# 原先好像是indian 数据集
 os.chdir('C:/Users/Dell/hwq/git_code/SimMIM')
 img_path = 'dataset/houston13-18/Houston13.mat'
 label_path = 'dataset/houston13-18/Houston13_7gt.mat'

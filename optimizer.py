@@ -75,6 +75,9 @@ def build_finetune_optimizer(config, model, logger):
     elif config.MODEL.TYPE == 'vit':
         num_layers = config.MODEL.VIT.DEPTH
         get_layer_func = partial(get_vit_layer, num_layers=num_layers + 2)
+    elif config.MODEL.TYPE == 'Dtransformer':
+        num_layers = config.MODEL.VIT.DEPTH
+        get_layer_func = partial(get_vit_layer, num_layers=num_layers + 2)
     else:
         raise NotImplementedError
     
@@ -119,8 +122,9 @@ def get_vit_layer(name, num_layers):
     else:
         return num_layers - 1
 
-
+#  根据网络变量名返回其在哪层
 def get_swin_layer(name, num_layers, depths):
+    # mask——token 与 patch——embd 都是第0层的
     if name in ("mask_token"):
         return 0
     elif name.startswith("patch_embed"):
@@ -139,10 +143,12 @@ def get_swin_layer(name, num_layers, depths):
 def get_finetune_param_groups(model, logger, lr, weight_decay, get_layer_func, scales, skip_list=(), skip_keywords=()):
     parameter_group_names = {}
     parameter_group_vars = {}
-
+    # 读取的是网络的参数。名字和值
     for name, param in model.named_parameters():
+        # 不需要梯度 下一个
         if not param.requires_grad:
             continue
+        #
         if len(param.shape) == 1 or name.endswith(".bias") or (name in skip_list) or \
                 check_keywords_in_name(name, skip_keywords):
             group_name = "no_decay"
@@ -176,7 +182,7 @@ def get_finetune_param_groups(model, logger, lr, weight_decay, get_layer_func, s
                 "lr": lr * scale,
                 "lr_scale": scale
             }
-
+        # 添加值和名字
         parameter_group_vars[group_name]["params"].append(param)
         parameter_group_names[group_name]["params"].append(name)
     logger.info("Param groups = %s" % json.dumps(parameter_group_names, indent=2))

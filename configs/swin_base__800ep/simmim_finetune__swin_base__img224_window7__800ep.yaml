@@ -20,3 +20,4 @@ TRAIN:
 PRINT_FREQ: 100
 SAVE_FREQ: 5
 TAG: simmim_finetune__swin_base__img224_window7__800ep
+IS_HSI: False

@@ -1,5 +1,5 @@
 MODEL:
-  TYPE: swin
+  TYPE: Dtransformer
   NAME: simmim_finetune
   DROP_PATH_RATE: 0.2
   SWIN:
@@ -7,8 +7,12 @@ MODEL:
     DEPTHS: [ 2, 2, 18, 2 ]
     NUM_HEADS: [ 6, 12, 24, 48 ]
     WINDOW_SIZE: 14
+  LABEL_SMOOTHING: 0.0
 DATA:
   IMG_SIZE: 224
+  MASK_PATCH_SIZE: 4
+  MASK_RATIO: 0.6
+  DATASET: huston13-18
 TRAIN:
   EPOCHS: 100
   WARMUP_EPOCHS: 20
@@ -19,4 +23,8 @@ TRAIN:
   LAYER_DECAY: 0.7
 PRINT_FREQ: 100
 SAVE_FREQ: 5
-TAG: simmim_finetune__swin_large__img224_window14__800ep
+TAG: simmim_finetune__Dtransformer_finetune
+IS_HSI: TRUE
+IS_DIST: False
+AUG:
+  MIXUP: 0.0

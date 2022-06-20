@@ -6,13 +6,16 @@
 # --------------------------------------------------------
 
 import os
+import torch
+
 import torch.distributed as dist
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 from torchvision import datasets, transforms
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import Mixup
 from timm.data import create_transform
 from timm.data.transforms import _pil_interp
+
 
 
 def build_loader_finetune(config, logger):
@@ -22,8 +25,8 @@ def build_loader_finetune(config, logger):
     dataset_val, _ = build_dataset(is_train=False, config=config, logger=logger)
     logger.info(f"Build dataset: train images = {len(dataset_train)}, val images = {len(dataset_val)}")
 
-    num_tasks = dist.get_world_size()
-    global_rank = dist.get_rank()
+    num_tasks = 1
+    global_rank = 0
     sampler_train = DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
     )
@@ -59,6 +62,58 @@ def build_loader_finetune(config, logger):
     return dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn
 
 
+# 训练数据 可以用源域大部分加上目标域全部，测试数据使用源域的一小部分
+def build_loader_finetune_for_hsi(config, logger):
+    # 明天首先要做的 就是先加载数据集 还有可能也要更改一下config的代码，为hsi做一个特定的属性 不然改代码不是太好改
+    config.defrost()
+    dataset_train,dataset_val, config.MODEL.NUM_CLASSES = build_dataset_for_hsi(is_train=True, config=config, logger=logger)
+    config.freeze()
+    # dataset_val, _ = build_dataset(is_train=False, config=config, logger=logger)
+    logger.info(f"Build dataset: train images = {len(dataset_train)}, val images = {len(dataset_val)}")
+
+    # num_tasks = dist.get_world_size()
+    # global_rank = dist.get_rank()
+    # sampler_train = DistributedSampler(
+    #     dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+    # )
+    # sampler_val = DistributedSampler(
+    #     dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False
+    # )
+    data_loader_train = DataLoader(dataset=dataset_train, batch_size=config.DATA.BATCH_SIZE, shuffle=True, num_workers=0,
+                                   sampler=None,
+                                   pin_memory=True, drop_last=True)
+    data_loader_val = DataLoader(dataset=dataset_val, batch_size=config.DATA.BATCH_SIZE, shuffle=True, num_workers=0,
+                                   sampler=None,
+                                   pin_memory=True, drop_last=True)
+    # data_loader_train = DataLoader(
+    #     dataset_train, sampler=sampler_train,
+    #     batch_size=config.DATA.BATCH_SIZE,
+    #     num_workers=config.DATA.NUM_WORKERS,
+    #     pin_memory=config.DATA.PIN_MEMORY,
+    #     drop_last=True,
+    # )
+    #
+    # data_loader_val = DataLoader(
+    #     dataset_val, sampler=sampler_val,
+    #     batch_size=config.DATA.BATCH_SIZE,
+    #     num_workers=config.DATA.NUM_WORKERS,
+    #     pin_memory=config.DATA.PIN_MEMORY,
+    #     drop_last=False,
+    # )
+
+    # setup mixup / cutmix
+    # 数据增强部分 图像的数据增强 我的应该不需要使用吧
+    # 要设置几个属性为0
+    mixup_fn = None
+    mixup_active = config.AUG.MIXUP > 0 or config.AUG.CUTMIX > 0. or config.AUG.CUTMIX_MINMAX is not None
+    if mixup_active:
+        mixup_fn = Mixup(
+            mixup_alpha=config.AUG.MIXUP, cutmix_alpha=config.AUG.CUTMIX, cutmix_minmax=config.AUG.CUTMIX_MINMAX,
+            prob=config.AUG.MIXUP_PROB, switch_prob=config.AUG.MIXUP_SWITCH_PROB, mode=config.AUG.MIXUP_MODE,
+            label_smoothing=config.MODEL.LABEL_SMOOTHING, num_classes=config.MODEL.NUM_CLASSES)
+
+    return dataset_train, dataset_val, data_loader_train, data_loader_val, None
+
 def build_dataset(is_train, config, logger):
     transform = build_transform(is_train, config)
     logger.info(f'Fine-tune data transform, is_train={is_train}:\n{transform}')
@@ -72,6 +127,25 @@ def build_dataset(is_train, config, logger):
         raise NotImplementedError("We only support ImageNet Now.")
 
     return dataset, nb_classes
+
+
+def build_dataset_for_hsi(is_train, config, logger):
+
+    # if config.DATA.DATASET == 'imagenet':
+    #     transform = build_transform(is_train, config)
+    #     logger.info(f'Fine-tune data transform, is_train={is_train}:\n{transform}')
+    #     prefix = 'train' if is_train else 'val'
+    #     root = os.path.join(config.DATA.DATA_PATH, prefix)
+    #     dataset = datasets.ImageFolder(root, transform=transform)
+    #     nb_classes = 1000
+    if config.DATA.DATASET == 'huston13-18':
+        from utils import get_hsi_dataloader, get_hsi_train_and_val_dataset
+        train_dataset,val_dataset = get_hsi_train_and_val_dataset(config)
+        nb_classes = 7
+    else:
+        raise NotImplementedError("We only support huston Now.")
+
+    return train_dataset,val_dataset, nb_classes
 
 
 def build_transform(is_train, config):

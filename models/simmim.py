@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import trunc_normal_
 
+from models.Trans_BCDM_A.net_A import build_Dtransformer
 from .swin_transformer import SwinTransformer
 from .vision_transformer import VisionTransformer
 
@@ -26,13 +27,20 @@ class SwinTransformerForSimMIM(SwinTransformer):
         trunc_normal_(self.mask_token, mean=0., std=.02)
 
     def forward(self, x, mask):
+        # self.path_emded 变为了 batch_size EMBED_DIM (img_size/patch_size)**2(错误的)
+        # # B Ph*Pw C
         x = self.patch_embed(x)
 
         assert mask is not None
+        # shape: 32 2304 128
         B, L, _ = x.shape
-
+        # 扩充到 B L 最后一个维度不变
         mask_tokens = self.mask_token.expand(B, L, -1)
+        # mask.flatten(1).unsqueeze(-1).size() 32 2304 1
+        # unsqueeze dim = -1时 dim = dim+input.dim()+1
+        # type_as 应该就是转化为相同的数据类型吧
         w = mask.flatten(1).unsqueeze(-1).type_as(mask_tokens)
+        # 对图像进行mask
         x = x * (1. - w) + mask_tokens * w
 
         if self.ape:
@@ -42,10 +50,12 @@ class SwinTransformerForSimMIM(SwinTransformer):
         for layer in self.layers:
             x = layer(x)
         x = self.norm(x)
-
+        # x 32 2304 128
         x = x.transpose(1, 2)
         B, C, L = x.shape
+        # height 和 weight 变为48
         H = W = int(L ** 0.5)
+        # 重新构建tensor 32 128 48 48
         x = x.reshape(B, C, H, W)
         return x
 
@@ -94,7 +104,52 @@ class VisionTransformerForSimMIM(VisionTransformer):
         x = x.permute(0, 2, 1).reshape(B, C, H, W)
         return x
 
+class SimMIMForHsi(nn.Module):
+    def __init__(self, encoder, encoder_stride):
+        super().__init__()
+        self.encoder = encoder
+        self.encoder_stride = encoder_stride
+        self.in_chans = self.encoder.in_chans
 
+        self.decoder = nn.Sequential(
+            nn.Conv1d(
+                in_channels=self.encoder.in_chans,
+                out_channels=self.encoder.in_chans, kernel_size=self.encoder.num_features // encoder_stride**2 ,stride=self.encoder.num_features // encoder_stride**2),
+            # nn.PixelShuffle(self.encoder_stride),
+        )
+
+
+        self.patch_size = self.encoder.patch_size
+
+    def forward(self, x, mask):
+        z = self.encoder(x, mask)
+        # B,C,D = z.size()
+        # z = z.reshape(-1,D).unsqueeze(1)
+
+        x_rec = self.decoder(z)
+        B,C,D = x_rec.size()
+        assert D == self.encoder_stride**2 , '解码后的图形不能转为正常的图像'
+        x_rec = x_rec.reshape((B,C,int(D**0.5),-1))
+
+        mask = mask.repeat_interleave(self.encoder.mask_patch_size, 1).contiguous()
+        B,M= mask.size()
+        mask = mask.reshape((B,M,1,1))
+        mask = mask.expand((B,M,self.encoder_stride,self.encoder_stride))
+        loss_recon = F.l1_loss(x, x_rec, reduction='none')
+        loss = (loss_recon * mask).sum() / (mask.sum() + 1e-5) / self.in_chans
+        return loss
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        if hasattr(self.encoder, 'no_weight_decay'):
+            return {'encoder.' + i for i in self.encoder.no_weight_decay()}
+        return {}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        if hasattr(self.encoder, 'no_weight_decay_keywords'):
+            return {'encoder.' + i for i in self.encoder.no_weight_decay_keywords()}
+        return {}
 class SimMIM(nn.Module):
     def __init__(self, encoder, encoder_stride):
         super().__init__()
@@ -133,7 +188,7 @@ class SimMIM(nn.Module):
         return {}
 
 
-def build_simmim(config):
+def build_simmim(config,is_hsi = False):
     model_type = config.MODEL.TYPE
     if model_type == 'swin':
         encoder = SwinTransformerForSimMIM(
@@ -174,9 +229,16 @@ def build_simmim(config):
             use_shared_rel_pos_bias=config.MODEL.VIT.USE_SHARED_RPB,
             use_mean_pooling=config.MODEL.VIT.USE_MEAN_POOLING)
         encoder_stride = 16
+    elif model_type == 'Dtransformer':
+        # 首先呢 输入的部分
+        encoder = build_Dtransformer(config)
+        # encode_stride 是 patch的边长
+        encoder_stride = 5
     else:
         raise NotImplementedError(f"Unknown pre-train model: {model_type}")
-
-    model = SimMIM(encoder=encoder, encoder_stride=encoder_stride)
+    if is_hsi:
+        model = SimMIMForHsi(encoder=encoder, encoder_stride=encoder_stride)
+    else:
+        model = SimMIM(encoder=encoder, encoder_stride=encoder_stride)
 
     return model
