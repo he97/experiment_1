@@ -3,6 +3,8 @@ from __future__ import print_function
 import argparse
 import os
 import random
+
+import torch
 import torch.optim as optim
 from sklearn import metrics
 from torch.autograd import Variable
@@ -46,7 +48,7 @@ def parse_option():
     """
     parser = argparse.ArgumentParser('SimMIM pre-training script', add_help=False)
     parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
-    parser.add_argument('--gamma', default = 0.9,type=float, required=False, help='data of gamma', )
+    parser.add_argument('--gamma', default=0.9, type=float, required=False, help='data of gamma', )
     parser.add_argument('--halfwidth', default=0, type=float, required=False, help='data of seed', )
     parser.add_argument('--sample_num', default=180, type=int, required=False, help='sum of sample in each category', )
     parser.add_argument('--n_class', default=7, type=int, required=False, help='sum of categories', )
@@ -323,7 +325,7 @@ def seed_everything(seed):
 # print ("accuracy for each class: ")
 # for i in range(CLASS_NUM):
 #     print ("Class " + str(i) + ": " + "{:.2f}".format(100 * AMean[i]) + " +- " + "{:.2f}".format(100 * AStd[i]))
-if __name__=='__main__':
+if __name__ == '__main__':
     _, config = parse_option()
 
     on_mac = True
@@ -365,7 +367,8 @@ if __name__=='__main__':
         pass
     else:
         # Load data
-        source_img, source_label, target_img, target_label = cubeData(SRC_PATH, SRC_LABEL_PATH, TGT_PATH, TGT_LABEL_PATH)
+        source_img, source_label, target_img, target_label = cubeData(SRC_PATH, SRC_LABEL_PATH, TGT_PATH,
+                                                                      TGT_LABEL_PATH)
         # source_img, source_label, target_img, target_label = cubeData1(file_path)
 
         # Load test data
@@ -380,7 +383,9 @@ if __name__=='__main__':
         # Load train data
         # sample_num 代表着每种类取多少样本
         if on_mac:
-            train_dataset, test_dataset = get_virtual_dataset(config,(256,48,5,5),(128,48,5,5))
+            train_dataset, test_dataset = get_virtual_dataset(config, (256, 48, 5, 5), (128, 48, 5, 5))
+            # train_dataset = train_dataset.type(torch.LongTensor)
+            # test_dataset = train_dataset.type(torch.LongTensor)
         else:
             src_img, src_label = get_sample_data(source_img, source_label, HalfWidth, SAMPLE_NUM)
             train_dataset = TensorDataset(torch.tensor(src_img), torch.tensor(src_label))
@@ -432,7 +437,10 @@ if __name__=='__main__':
 
         E_optim = optim.Adam(E.parameters(), lr=lr)
         C_optim = optim.Adam(list(C1.parameters()) + list(C2.parameters()), lr=lr)
-        criterion = nn.CrossEntropyLoss().cuda()
+        if on_mac:
+            criterion = nn.CrossEntropyLoss()
+        else:
+            criterion = nn.CrossEntropyLoss().cuda()
 
         eta = 0.01
 
@@ -451,10 +459,12 @@ if __name__=='__main__':
             time_start_per_epoch = time.time()
             for batch_idx, data in enumerate(zip(src_train_loader, tgt_train_loader)):
                 (data_s, label_s), (data_t, label_t) = data
-
-                data_s, label_s = data_s.cuda(), label_s.cuda()
-                data_t, label_t = data_t.cuda(), label_t.cuda()
+                if not on_mac:
+                    data_s, label_s = data_s.cuda(), label_s.cuda()
+                    data_t, label_t = data_t.cuda(), label_t.cuda()
                 data_all = Variable(torch.cat((data_s, data_t), 0))
+                # data_all = data_all.type(torch.LongTensor)
+                label_s = label_s.long()
                 label_s = Variable(label_s)
                 bs = len(label_s)
 
@@ -464,6 +474,7 @@ if __name__=='__main__':
                 C_optim.zero_grad()
 
                 output = E(data_all)
+                # 输出size是64 512
                 output1 = C1(output)
                 output2 = C2(output)
                 output_s1 = output1[:bs, :]
@@ -585,6 +596,3 @@ if __name__=='__main__':
     print("accuracy for each class: ")
     for i in range(CLASS_NUM):
         print("Class " + str(i) + ": " + "{:.2f}".format(100 * AMean[i]) + " +- " + "{:.2f}".format(100 * AStd[i]))
-
-
-

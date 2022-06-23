@@ -597,6 +597,7 @@ def get_tensor_dataset(size, tensor_type, have_label=True):
             s *= x
         vector = torch.arange(s)
         vector.reshape(size)
+    vector = vector.type(torch.FloatTensor)
     if have_label:
         label = torch.full((size[0],), 1.0)
         return TensorDataset(vector, label)

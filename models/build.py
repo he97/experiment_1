@@ -9,7 +9,7 @@
 from .swin_transformer import build_swin
 from .vision_transformer import build_vit
 from .simmim import build_simmim
-from models.Trans_BCDM_A.net_A import build_Dtransformer_pretrain
+from models.Trans_BCDM_A.net_A import build_Dtransformer_finetune
 
 
 def build_model(config, is_pretrain=True,is_hsi = False):
@@ -22,7 +22,7 @@ def build_model(config, is_pretrain=True,is_hsi = False):
         elif model_type == 'vit':
             model = build_vit(config)
         elif model_type == 'Dtransformer':
-            model = build_Dtransformer_pretrain(config)
+            model = build_Dtransformer_finetune(config)
         else:
             raise NotImplementedError(f"Unknown fine-tune model: {model_type}")
 

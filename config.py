@@ -46,7 +46,7 @@ _C.DATA.SAMPLE_NUM = 32
 _C.DATA.N_CLASS = 32
     # nClass = 16
     # 波段数
-_C.DATA.CHANNEL_DIM = 32
+_C.DATA.CHANNEL_DIM = 48
 # 这个命名是不对的，表示的每个channel表示为长度为多少的特征向量
 _C.DATA.PATCH_DIM = 512
     # dim = 112
