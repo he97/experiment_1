@@ -323,10 +323,10 @@ def cubeData1(img_path, label_path):
     print(temp2.keys())
     gt1 = temp2[list(temp2.keys())[-1]]
     print(gt1.shape)
-    #6.5 之前没有。可能是因为从别的文件中复制过来的，那个没使用归一化？
+    # 6.5 之前没有。可能是因为从别的文件中复制过来的，那个没使用归一化？
     data_s = data1.reshape(np.prod(data1.shape[:2]), np.prod(data1.shape[2:]))  # (111104,204)
-    data_scaler_s = preprocessing.scale(data_s)  #标准化 (X-X_mean)/X_std,
-    Data_Band_Scaler_s = data_scaler_s.reshape(data1.shape[0], data1.shape[1],data1.shape[2])
+    data_scaler_s = preprocessing.scale(data_s)  # 标准化 (X-X_mean)/X_std,
+    Data_Band_Scaler_s = data_scaler_s.reshape(data1.shape[0], data1.shape[1], data1.shape[2])
 
     return data1, gt1
     # return Data_Band_Scaler_s, gt1
@@ -572,8 +572,7 @@ def get_virtual_dataset(config, train_size, val_size, tensor_type='full'):
     return train_dataset, val_dataset
 
 
-
-def get_tensor_dataset(size, tensor_type, have_label=True):
+def get_tensor_dataset(size=(256, 48, 5, 5), tensor_type='randn', have_label=True):
     """
     通过size和类型设置张量。
     eye 不能用 没改了
@@ -603,3 +602,14 @@ def get_tensor_dataset(size, tensor_type, have_label=True):
         return TensorDataset(vector, label)
     else:
         return TensorDataset(vector)
+def get_mask_dataloader(config,size=(256, 48, 5, 5)):
+    all_samples = torch.randn(size)
+    all_labels = torch.full((size[0],), 1.0)
+
+    transform = HsiMaskGenerator(config.DATA.MASK_RATIO, all_samples.shape[1],
+                                 mask_patch_size=config.DATA.MASK_PATCH_SIZE)
+
+    dataset = HsiMaskTensorDataSet(torch.tensor(all_samples), torch.tensor(all_labels), transform=transform)
+    data_loader = DataLoader(dataset, batch_size=config.DATA.BATCH_SIZE, shuffle=False, num_workers=0, sampler=None,
+                             pin_memory=True, drop_last=True)
+    return data_loader

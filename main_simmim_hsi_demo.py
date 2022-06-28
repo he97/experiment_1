@@ -23,7 +23,8 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper,cubeData1,get_sample_data_without_train_val,get_hsi_dataloader
+from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper, cubeData1, \
+    get_sample_data_without_train_val, get_hsi_dataloader, get_tensor_dataset, get_mask_dataloader
 from PIL import Image
 import matplotlib.pyplot as plt
 # from apex import amp
@@ -61,7 +62,7 @@ def parse_option():
     parser.add_argument('--use-checkpoint', action='store_true',
                         help="whether to use gradient checkpointing to save memory")
     # apex 的参数 混合精度加速 choices是对应函数的参数
-    parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
+    parser.add_argument('--amp-opt-level', type=str, default='O0', choices=['O0', 'O1', 'O2'],
                         help='mixed precision opt level, if O0, no amp is used')
     # 输出文件的根目录
     parser.add_argument('--output', default='output', type=str, metavar='PATH',
@@ -85,10 +86,14 @@ def main(config):
     # 测试得到已经加载了train文件夹
 
     # 加载高光谱数据集
-    data_loader_train = get_hsi_dataloader(config)
+    if on_mac:
+        data_loader_train = get_mask_dataloader(config)
+    else:
+        data_loader_train = get_hsi_dataloader(config)
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config, is_pretrain=True,is_hsi=True)
-    model.cuda()
+    if not on_mac:
+        model.cuda()
     logger.info(str(model))
     # 构建优化器
     optimizer = build_optimizer(config, model, logger, is_pretrain=True)
@@ -167,8 +172,9 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
         # img size 128 192 192
         # mask size 128 48 48
         # 遮盖比率为0.75
-        img = img.cuda(non_blocking=True)
-        mask = mask.cuda(non_blocking=True)
+        if not on_mac:
+            img = img.cuda(non_blocking=True)
+            mask = mask.cuda(non_blocking=True)
         # 从模型的结果得到一个loss
         loss = model(img, mask)
         # 训练的梯度累计次数
@@ -212,8 +218,8 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                     grad_norm = get_grad_norm(model.parameters())
             optimizer.step()
             lr_scheduler.step_update(epoch * num_steps + idx)
-
-        torch.cuda.synchronize()
+        if not on_mac:
+            torch.cuda.synchronize()
 
         loss_meter.update(loss.item(), img.size(0))
         norm_meter.update(grad_norm)
@@ -238,6 +244,7 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 
 if __name__ == '__main__':
     _, config = parse_option()
+    on_mac = True
 
     # C:/ProgramData/Anaconda3/envs/CGDM/Lib/site-packages/apex/amp/_amp_state.py 修改了调用问题
     if config.AMP_OPT_LEVEL != "O0":
@@ -256,7 +263,10 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
-    torch.cuda.set_device(config.LOCAL_RANK)
+    if on_mac:
+        torch.cuda.set_device(config.LOCAL_RANK)
+    else:
+        torch.cuda.set_device(config.LOCAL_RANK)
     if config.IS_DIST:
         torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
         torch.distributed.barrier()

@@ -410,20 +410,8 @@ if __name__ == '__main__':
 
         E = model.to(device)
 
-        C1 = T_Classifier(
-            num_classes=CLASS_NUM,
-            attn_layers=Encoder(
-                dim=patch_dim,
-                depth=1,
-                heads=2),
-            dropout=0.1).to(device)
-        C2 = T_Classifier(
-            num_classes=CLASS_NUM,
-            attn_layers=Encoder(
-                dim=patch_dim,
-                depth=1,
-                heads=2),
-            dropout=0.1).to(device)
+        C1 = ResClassifier(num_classes=7, num_unit=512)
+        C2 = ResClassifier(num_classes=7, num_unit=512)
 
         # C1 = ResClassifier(num_classes = CLASS_NUM, num_unit=patch_dim, middle=1024).to(device)
         # C2 = ResClassifier(num_classes = CLASS_NUM, num_unit=patch_dim, middle=1024).to(device)

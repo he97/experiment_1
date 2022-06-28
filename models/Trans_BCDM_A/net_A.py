@@ -546,15 +546,18 @@ class AttentionLayers(nn.Module):
 class PatchEmbed(nn.Module):
     def __init__(self, in_chans=102, embed_dim=512, patch_size=9):
         super(PatchEmbed, self).__init__()
-        self.proj = nn.Conv1d(in_channels=patch_size * patch_size, out_channels=embed_dim, kernel_size=1)
+        # self.proj = nn.Conv1d(in_channels=1, out_channels=embed_dim, kernel_size=1)
+        self.proj = nn.Linear(patch_size**2, embed_dim)
 
     def forward(self, x):
         # 在这里的卷积 我认为的是应该进行一个2d的卷积。
+        # B 48 5 5
         B, C, H, W = x.shape
+        # B 48 25
         x = x.view(B, C, -1)
-        x = x.permute(0, 2, 1)
+        # 6.24 测试转置之后，每个pixel对所有波段进行特征编码。是不是就会选出比较有价值的波段？B 25 48
         x = self.proj(x)
-        x = x.permute(0, 2, 1)
+        # x = x.permute(0, 2, 1)
         return x
 
 
@@ -651,7 +654,7 @@ class DTransformer_simMIM_finetune(nn.Module):
 
         self.attn_layers = attn_layers
         self.norm = nn.LayerNorm(dim)
-        self.mlp_head = nn.Conv2d(in_channels=1,out_channels=in_chans,kernel_size=1,stride=1) if exists(num_classes) else None
+        self.mlp_head = nn.Linear(dim,dim) if exists(num_classes) else None
 
     def forward(self, img):
         x = self.patch_embed(img)
@@ -668,7 +671,7 @@ class DTransformer_simMIM_finetune(nn.Module):
         # MLP Classifier
         x = self.norm(x)
         x = x[:, 0, :]
-        x = torch.unsqueeze(x, 1)
+        # x = torch.unsqueeze(x, 1)
         if not self.mlp_head:
             x = self.mlp_head(x)
         return x
