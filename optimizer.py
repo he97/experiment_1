@@ -15,7 +15,7 @@ def build_optimizer(config, model, logger, is_pretrain):
     if is_pretrain:
         return build_pretrain_optimizer(config, model, logger)
     else:
-        return build_finetune_optimizer(config, model, logger)
+        return build_his_finetune_optimizer(config, model, logger)
 
 
 def build_pretrain_optimizer(config, model, logger):
@@ -66,6 +66,45 @@ def get_pretrain_param_groups(model, logger, skip_list=(), skip_keywords=()):
             {'params': no_decay, 'weight_decay': 0.}]
 
 
+def freeze_parameter(model):
+    key_word = model.freeze()
+    names = []
+    for name, param in model.named_parameters():
+        if check_keywords_in_name(name, key_word):
+            names.append(name)
+            param.requires_grad = False
+    return names
+
+
+def build_his_finetune_optimizer(config, model, logger):
+    logger.info('>>>>>>>>>> Build Optimizer for fine_tune Stage')
+    skip = {}
+    skip_keywords = {}
+    if hasattr(model, 'no_weight_decay'):
+        skip = model.no_weight_decay()
+        logger.info(f'No weight decay: {skip}')
+        logger.info('skip len:', len(skip))
+    if hasattr(model, 'no_weight_decay_keywords'):
+        skip_keywords = model.no_weight_decay_keywords()
+        logger.info(f'No weight decay keywords: {skip_keywords}')
+        logger.info('skip_keywords len:', len(skip_keywords))
+    freeze = freeze_parameter(model)
+    logger.info(f'has frozen param:{freeze}')
+    parameters = get_pretrain_param_groups(model, logger, skip, skip_keywords)
+
+    opt_lower = 'adamw'
+    optimizer = None
+    if opt_lower == 'sgd':
+        optimizer = optim.SGD(parameters, momentum=config.TRAIN.OPTIMIZER.MOMENTUM, nesterov=True,
+                              lr=config.TRAIN.BASE_LR, weight_decay=config.TRAIN.WEIGHT_DECAY)
+    elif opt_lower == 'adamw':
+        optimizer = optim.AdamW(parameters, eps=1e-08, betas=(0.9, 0.999),
+                                lr=6.25e-06, weight_decay=0.05)
+    for name, param in enumerate(optimizer.param_groups[0]):
+        logger.info(name)
+    return optimizer
+
+
 def build_finetune_optimizer(config, model, logger):
     logger.info('>>>>>>>>>> Build Optimizer for Fine-tuning Stage')
     if config.MODEL.TYPE == 'swin':
@@ -80,9 +119,9 @@ def build_finetune_optimizer(config, model, logger):
         get_layer_func = partial(get_vit_layer, num_layers=num_layers + 2)
     else:
         raise NotImplementedError
-    
+
     scales = list(config.TRAIN.LAYER_DECAY ** i for i in reversed(range(num_layers + 2)))
-    
+
     skip = {}
     skip_keywords = {}
     if hasattr(model, 'no_weight_decay'):
@@ -95,7 +134,7 @@ def build_finetune_optimizer(config, model, logger):
     parameters = get_finetune_param_groups(
         model, logger, config.TRAIN.BASE_LR, config.TRAIN.WEIGHT_DECAY,
         get_layer_func, scales, skip, skip_keywords)
-    
+
     opt_lower = config.TRAIN.OPTIMIZER.NAME.lower()
     optimizer = None
     if opt_lower == 'sgd':
@@ -121,6 +160,7 @@ def get_vit_layer(name, num_layers):
         return layer_id + 1
     else:
         return num_layers - 1
+
 
 #  根据网络变量名返回其在哪层
 def get_swin_layer(name, num_layers, depths):

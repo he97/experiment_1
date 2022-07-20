@@ -328,7 +328,7 @@ def cubeData1(img_path, label_path):
     data_scaler_s = preprocessing.scale(data_s)  # 标准化 (X-X_mean)/X_std,
     Data_Band_Scaler_s = data_scaler_s.reshape(data1.shape[0], data1.shape[1], data1.shape[2])
 
-    return data1, gt1
+    return Data_Band_Scaler_s, gt1
     # return Data_Band_Scaler_s, gt1
 
 
@@ -429,7 +429,7 @@ def get_hsi_dataloader(config):
 
     transform = HsiMaskGenerator(config.DATA.MASK_RATIO, all_samples.shape[1],
                                  mask_patch_size=config.DATA.MASK_PATCH_SIZE)
-
+    all_samples = to_group(all_samples, config)
     dataset = HsiMaskTensorDataSet(torch.tensor(all_samples), torch.tensor(all_labels), transform=transform)
     data_loader = DataLoader(dataset, batch_size=config.DATA.BATCH_SIZE, shuffle=False, num_workers=0, sampler=None,
                              pin_memory=True, drop_last=True)
@@ -598,18 +598,31 @@ def get_tensor_dataset(size=(256, 48, 5, 5), tensor_type='randn', have_label=Tru
         vector.reshape(size)
     vector = vector.type(torch.FloatTensor)
     if have_label:
-        label = torch.full((size[0],), 1.0)
+        label = torch.randint(6,(size[0],))
+        label = label.type(torch.FloatTensor)
         return TensorDataset(vector, label)
     else:
         return TensorDataset(vector)
-def get_mask_dataloader(config,size=(256, 48, 5, 5)):
+
+
+def get_mask_dataloader(config, size=(128, 48, 5, 5)):
     all_samples = torch.randn(size)
     all_labels = torch.full((size[0],), 1.0)
 
     transform = HsiMaskGenerator(config.DATA.MASK_RATIO, all_samples.shape[1],
                                  mask_patch_size=config.DATA.MASK_PATCH_SIZE)
-
+    all_samples = to_group(all_samples,config)
     dataset = HsiMaskTensorDataSet(torch.tensor(all_samples), torch.tensor(all_labels), transform=transform)
     data_loader = DataLoader(dataset, batch_size=config.DATA.BATCH_SIZE, shuffle=False, num_workers=0, sampler=None,
                              pin_memory=True, drop_last=True)
     return data_loader
+
+
+def to_group(tensor, config):
+    B, C, H, W = tensor.size()
+    tensor = tensor.view(B, C, -1)
+    mask_patch_size = config.DATA.MASK_PATCH_SIZE
+    assert C % mask_patch_size == 0, 'can not devide channels to groups'
+    d = C // mask_patch_size
+    tensor = tensor.reshape(B, d, -1)
+    return tensor

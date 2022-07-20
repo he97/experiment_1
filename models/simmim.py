@@ -110,11 +110,13 @@ class SimMIMForHsi(nn.Module):
         self.encoder = encoder
         self.encoder_stride = encoder_stride
         self.in_chans = self.encoder.in_chans
+        self.groups = self.in_chans // self.encoder_stride
 
         self.decoder = nn.Sequential(
-            nn.Conv1d(
-                in_channels=self.encoder.in_chans,
-                out_channels=self.encoder.in_chans, kernel_size=self.encoder.num_features // encoder_stride**2 ,stride=self.encoder.num_features // encoder_stride**2),
+            nn.Linear(in_features=self.encoder.num_features, out_features=self.encoder.patch_size**2*self.encoder.mask_patch_size),
+            # nn.Conv1d(
+            #     in_channels=self.encoder.in_chans,
+            #     out_channels=self.encoder.in_chans, kernel_size=self.encoder.num_features // encoder_stride**2 ,stride=self.encoder.num_features // encoder_stride**2),
             # nn.PixelShuffle(self.encoder_stride),
         )
 
@@ -127,16 +129,18 @@ class SimMIMForHsi(nn.Module):
         # z = z.reshape(-1,D).unsqueeze(1)
 
         x_rec = self.decoder(z)
-        B,C,D = x_rec.size()
-        assert D == self.encoder_stride**2 , '解码后的图形不能转为正常的图像'
-        x_rec = x_rec.reshape((B,C,int(D**0.5),-1))
-
-        mask = mask.repeat_interleave(self.encoder.mask_patch_size, 1).contiguous()
-        B,M= mask.size()
-        mask = mask.reshape((B,M,1,1))
-        mask = mask.expand((B,M,self.encoder_stride,self.encoder_stride))
+        # B,C,D = x_rec.size(
+        # x_rec = x_rec.reshape(B,C*self.encoder.mask_patch_size,-1)
+        B, C, D = x_rec.size()
+        # assert D == self.encoder_stride**2 , '解码后的图形不能转为正常的图像'
+        # x_rec = x_rec.reshape((B,C,int(D**0.5),-1))
+        mask = mask.unsqueeze(-1).expand(-1, -1, D)
+        # mask = mask.repeat_interleave(self.encoder.mask_patch_size, 1).contiguous()
+        # B,M= mask.size()
+        # mask = mask.reshape((B,M,1,1))
+        # mask = mask.expand((B,M,self.encoder_stride,self.encoder_stride))
         loss_recon = F.l1_loss(x, x_rec, reduction='none')
-        loss = (loss_recon * mask).sum() / (mask.sum() + 1e-5) / self.in_chans
+        loss = (loss_recon * mask).sum() / (mask.sum() + 1e-5) / self.groups
         return loss
 
     @torch.jit.ignore
@@ -233,7 +237,7 @@ def build_simmim(config,is_hsi = False):
         # 首先呢 输入的部分
         encoder = build_Dtransformer(config)
         # encode_stride 是 patch的边长
-        encoder_stride = 5
+        encoder_stride = config.DATA.MASK_PATCH_SIZE
     else:
         raise NotImplementedError(f"Unknown pre-train model: {model_type}")
     if is_hsi:

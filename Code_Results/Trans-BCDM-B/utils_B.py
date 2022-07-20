@@ -28,15 +28,19 @@ def cubeData(src_path,src_label_path,tgt_path,tgt_label_path):
     print(temp.keys())
     gt2 = temp['map']
 
-    data_s = data1.reshape(np.prod(data1.shape[:2]), np.prod(data1.shape[2:]))  # (111104,204)
-    data_scaler_s = preprocessing.scale(data_s)  #标准化 (X-X_mean)/X_std,
-    Data_Band_Scaler_s = data_scaler_s.reshape(data1.shape[0], data1.shape[1],data1.shape[2])
+    Data_Band_Scaler_s = data_norm(data1)
 
-    data_t = data2.reshape(np.prod(data2.shape[:2]), np.prod(data2.shape[2:]))  # (111104,204)
-    data_scaler_t = preprocessing.scale(data_t)  #标准化 (X-X_mean)/X_std,
-    Data_Band_Scaler_t = data_scaler_t.reshape(data2.shape[0], data2.shape[1],data2.shape[2])
+    Data_Band_Scaler_t = data_norm(data2)
 
     return Data_Band_Scaler_s, gt1, Data_Band_Scaler_t, gt2
+
+
+def data_norm(data):
+    data_s = data.reshape(np.prod(data.shape[:2]), np.prod(data.shape[2:]))  # (111104,204)
+    data_scaler_s = preprocessing.scale(data_s)  # 标准化 (X-X_mean)/X_std,
+    Data_Band_Scaler_s = data_scaler_s.reshape(data.shape[0], data.shape[1], data.shape[2])
+    return Data_Band_Scaler_s
+
 
 def cubeData1(file_path):
     temp = sio.loadmat(file_path)

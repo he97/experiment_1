@@ -12,6 +12,7 @@ import argparse
 import datetime
 import numpy as np
 import torch
+import dill
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
@@ -22,7 +23,8 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper, get_mask_dataloader
+from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper, cubeData1, \
+    get_sample_data_without_train_val, get_hsi_dataloader, get_tensor_dataset, get_mask_dataloader
 from PIL import Image
 import matplotlib.pyplot as plt
 # from apex import amp
@@ -48,7 +50,10 @@ def parse_option():
     parser.add_argument('--is_dist', default=False, type=bool, help="is distrubution")
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
-    parser.add_argument('--data-path', type=str, help='path to dataset')
+    parser.add_argument('--data-source-path', type=str, help='path to source dataset')
+    parser.add_argument('--label-source-path', type=str, help='path to source label')
+    parser.add_argument('--data-target-path', type=str, help='path to target dataset')
+    parser.add_argument('--label-target-path', type=str, help='path to target label')
     # 继续？继续什么呢
     parser.add_argument('--resume', help='resume from checkpoint')
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
@@ -76,15 +81,19 @@ def parse_option():
 
 
 def main(config):
-    if on_mac:
-        data_loader_train = get_mask_dataloader(config,size=(1024,64,48,48))
-    else:
-        data_loader_train = build_loader(config, logger, is_pretrain=True)
+    #
+    # data_loader_train = build_loader(config, logger, is_pretrain=True)
     # 测试得到已经加载了train文件夹
 
-    logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config, is_pretrain=True)
-    # model.cuda()
+    # 加载高光谱数据集
+    if on_mac:
+        data_loader_train = get_mask_dataloader(config)
+    else:
+        data_loader_train = get_hsi_dataloader(config)
+    logger.info(f"Creating model:{config.MODEL.TYPE}/{'demo'+config.MODEL.NAME}")
+    model = build_model(config, is_pretrain=True,is_hsi=True)
+    if not on_mac:
+        model.cuda()
     logger.info(str(model))
     # 构建优化器
     optimizer = build_optimizer(config, model, logger, is_pretrain=True)
@@ -129,8 +138,17 @@ def main(config):
 
         train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler)
         # 保存断点的函数吧 先不看了
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
+        # if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        #     save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
+        # if (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        #     save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
+    print('lr_1:', lr_1)
+    print('lr_2:', lr_2)
+    l1 = plt.plot(lr_1, 'r--', label='type1')
+    l2 = plt.plot(lr_2, 'g--', label='type2')
+    # plt.plot(lr_1, 'ro-', lr_2, 'g+-')
+    plt.legend()
+    plt.show()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -144,8 +162,11 @@ def show_image(image):
     c_PIL.save('others/1.jpg')
 
 def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
-    model.train()
+    # model.train()
+
     optimizer.zero_grad()
+
+
 
     num_steps = len(data_loader)
     batch_time = AverageMeter()
@@ -154,13 +175,16 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 
     start = time.time()
     end = time.time()
+    # index_count = 0
     for idx, (img, mask, _) in enumerate(data_loader):
+        # index_count += 1
         #non-blocking 不会堵塞与其无关的的事情
         # img size 128 192 192
         # mask size 128 48 48
         # 遮盖比率为0.75
-        img = img.cuda(non_blocking=True)
-        mask = mask.cuda(non_blocking=True)
+        if not on_mac:
+            img = img.cuda(non_blocking=True)
+            mask = mask.cuda(non_blocking=True)
         # 从模型的结果得到一个loss
         loss = model(img, mask)
         # 训练的梯度累计次数
@@ -204,14 +228,22 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                     grad_norm = get_grad_norm(model.parameters())
             optimizer.step()
             lr_scheduler.step_update(epoch * num_steps + idx)
-
-        torch.cuda.synchronize()
+        if not on_mac:
+            torch.cuda.synchronize()
 
         loss_meter.update(loss.item(), img.size(0))
         norm_meter.update(grad_norm)
         batch_time.update(time.time() - end)
         end = time.time()
-
+        lr_1.append(optimizer.state_dict()['param_groups'][0]['lr'])
+        lr_2.append(optimizer.state_dict()['param_groups'][1]['lr'])
+        a = optimizer.state_dict()['param_groups'][0]['lr']
+        b = optimizer.state_dict()['param_groups'][1]['lr']
+        logger.info(
+            f'Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t'
+            f'0:{a}\t'
+            f'1:{b}\t'
+        )
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]['lr']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
@@ -224,14 +256,14 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
+    # logger.info(f"INDEX_COUNT {epoch} index_count is {index_count}")
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
 if __name__ == '__main__':
     _, config = parse_option()
-
     on_mac = True
-
+    lr_1, lr_2 = [], []
     # C:/ProgramData/Anaconda3/envs/CGDM/Lib/site-packages/apex/amp/_amp_state.py 修改了调用问题
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
@@ -249,7 +281,10 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
-    torch.cuda.set_device(config.LOCAL_RANK)
+    if on_mac:
+        torch.cuda.set_device(config.LOCAL_RANK)
+    else:
+        torch.cuda.set_device(config.LOCAL_RANK)
     if config.IS_DIST:
         torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
         torch.distributed.barrier()
@@ -283,7 +318,7 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=0, name=f"{config.MODEL.NAME}")
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=0, name=f"{'demo_'+config.MODEL.NAME}")
     # 估摸着也就是看看是不是主机
     if 1:
         path = os.path.join(config.OUTPUT, "config.json")

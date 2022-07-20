@@ -139,6 +139,7 @@ _C.MODEL.Dtransformer.QKV_BIAS = True
 _C.MODEL.Dtransformer.QK_SCALE = None
 _C.MODEL.Dtransformer.APE = False
 _C.MODEL.Dtransformer.PATCH_NORM = True
+_C.MODEL.Dtransformer.DEPTH = 3
 
 
 # -----------------------------------------------------------------------------

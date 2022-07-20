@@ -544,17 +544,17 @@ class AttentionLayers(nn.Module):
 
 
 class PatchEmbed(nn.Module):
-    def __init__(self, in_chans=102, embed_dim=512, patch_size=9):
+    def __init__(self, in_chans=102, embed_dim=512):
         super(PatchEmbed, self).__init__()
         # self.proj = nn.Conv1d(in_channels=1, out_channels=embed_dim, kernel_size=1)
-        self.proj = nn.Linear(patch_size**2, embed_dim)
+        self.proj = nn.Linear(in_chans, embed_dim)
 
     def forward(self, x):
         # 在这里的卷积 我认为的是应该进行一个2d的卷积。
         # B 48 5 5
-        B, C, H, W = x.shape
+        B, C, F = x.shape
         # B 48 25
-        x = x.view(B, C, -1)
+        # x = x.view(B, C, -1)
         # 6.24 测试转置之后，每个pixel对所有波段进行特征编码。是不是就会选出比较有价值的波段？B 25 48
         x = self.proj(x)
         # x = x.permute(0, 2, 1)
@@ -585,6 +585,7 @@ class DTransformer(nn.Module):
         super().__init__()
         assert isinstance(attn_layers, Encoder), 'attention layers must be an Encoder'
         assert image_size % patch_size == 0, 'image dimensions must be divisible by the patch size'
+        assert in_chans % self.mask_patch_size == 0, 'can not divide to group'
         dim = attn_layers.dim
 
         self.num_features = self.embed_dim = patch_dim
@@ -593,8 +594,8 @@ class DTransformer(nn.Module):
 
         self.patch_size = patch_size
 
-        self.patch_embed = PatchEmbed(num_patches, patch_dim, patch_size)
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
+        self.patch_embed = PatchEmbed(patch_size**2 * self.mask_patch_size, patch_dim)
+        self.pos_embedding = nn.Parameter(torch.randn(1, in_chans // self.mask_patch_size + 1, dim))
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
@@ -629,6 +630,7 @@ class DTransformer_simMIM_finetune(nn.Module):
             patch_dim,
             image_size,
             patch_size,
+            group_size = 4,
             attn_layers,
             pos_embed=False,
             num_classes=None,
@@ -638,15 +640,17 @@ class DTransformer_simMIM_finetune(nn.Module):
         super().__init__()
         assert isinstance(attn_layers, Encoder), 'attention layers must be an Encoder'
         assert image_size % patch_size == 0, 'image dimensions must be divisible by the patch size'
+        assert in_chans % group_size == 0, 'can not divide in_chans tp group'
+        self.groups = in_chans // group_size
         dim = attn_layers.dim
-
+        self.group_size = group_size
         self.num_features = self.embed_dim = patch_dim
         self.pos_embed = pos_embed
         self.in_chans = in_chans
 
         self.patch_size = patch_size
 
-        self.patch_embed = PatchEmbed(num_patches, patch_dim, patch_size)
+        self.patch_embed = PatchEmbed(image_size**2*self.group_size,dim)
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
@@ -676,13 +680,17 @@ class DTransformer_simMIM_finetune(nn.Module):
             x = self.mlp_head(x)
         return x
 
+    @torch.jit.ignore
+    def freeze(self):
+        return {'attn_layers.layers.0', 'attn_layers.layers.1', 'attn_layers.layers.2', 'attn_layers.layers.3'}
 
 class DtransformerForSimMIM(DTransformer):
     def __init__(self, mask_patch_size=1, **kwargs):
+        self.mask_patch_size = mask_patch_size
         super().__init__(**kwargs)
 
         # assert self.num_classes == 0
-        self.mask_patch_size = mask_patch_size
+
         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
         self._trunc_normal_(self.mask_token, std=.02)
 
@@ -696,7 +704,7 @@ class DtransformerForSimMIM(DTransformer):
         B, L, _ = x.shape
 
         mask_token = self.mask_token.expand(B, L, -1)
-        mask = mask.repeat(1, self.mask_patch_size)
+        # mask = mask.repeat(1, self.mask_patch_size)
         # w = mask.flatten(1).unsqueeze(-1).type_as(mask_token)
         w = mask.unsqueeze(-1).type_as(mask_token)
         x = x * (1 - w) + mask_token * w
@@ -744,7 +752,13 @@ class DtransformerForSimMIM(DTransformer):
         # H = W = int(L ** 0.5)
         # x = x.permute(0, 2, 1).reshape(B, C, H, W)
         # return x
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
 
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table','layers.1','layers.0'}
 
 def build_Dtransformer(config):
     # 师哥代码的参数
@@ -765,7 +779,7 @@ def build_Dtransformer(config):
         patch_size=5,
         attn_layers=Encoder(
             dim=patch_dim,
-            depth=2,
+            depth=config.MODEL.Dtransformer.DEPTH,
             heads=2))
     return model
 
@@ -787,9 +801,10 @@ def build_Dtransformer_finetune(config):
         patch_dim=patch_dim,
         image_size=5,
         patch_size=5,
+        group_size=4,
         attn_layers=Encoder(
             dim=patch_dim,
-            depth=2,
+            depth=config.MODEL.Dtransformer.DEPTH,
             heads=2),
         num_classes=512,
         dropout=0.1)

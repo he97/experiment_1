@@ -7,6 +7,7 @@ MODEL:
     DEPTHS: [ 2, 2, 18, 2 ]
     NUM_HEADS: [ 4, 8, 16, 32 ]
     WINDOW_SIZE: 6
+    DEPTH: 3
 DATA:
   IMG_SIZE: 192
   MASK_PATCH_SIZE: 4
